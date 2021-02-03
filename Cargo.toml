@@ -8,3 +8,7 @@ edition = "2018"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
+hyper = { version = "0.14", features = ["full"] }
+hyper-tls = { version = "0.5" }
+eyre = { version = "0.6" }
+color-eyre = { version = "0.5" }
