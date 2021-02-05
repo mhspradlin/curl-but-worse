@@ -2,11 +2,11 @@ use std::collections::HashSet;
 use std::io::{BufRead, Write};
 
 use color_eyre::eyre::{eyre, Result, WrapErr};
-use hyper::Client;
 use tokio::join;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task::JoinHandle;
+use futures::future;
 
 #[tokio::main]
 pub async fn main() -> Result<()> {
@@ -45,7 +45,6 @@ fn create_session() -> (Receiver<Command>, Sender<CommandResult>, JoinHandle<Res
                 urls.insert(url.into());
             }
             let command = Command {
-                id: "id123".into(),
                 urls,
             };
             reader_tx.blocking_send(command).wrap_err("Error sending Command")?;
@@ -88,32 +87,45 @@ fn create_quit_commands() -> HashSet<&'static str> {
 }
 
 async fn dispatcher(mut command_rx: Receiver<Command>, result_tx: Sender<CommandResult>) -> Result<()> {
-    // TODO Make HTTP client, dispatch requests, gather and send responses
-
     while let Some(command) = command_rx.recv().await {
         println!("(dispatch) Got command: {:?}", command);
-        for url in command.urls {
-            let command_result = CommandResult {
-                command_id: command.id.clone(),
-                url,
-                output: "What a great result!".into(),
-            };
-            result_tx.send(command_result).await.wrap_err("Error sending CommandResult")?;
-        }
+        let requests = command.urls.iter()
+            .map(|url| tokio::spawn(request_url(url.clone(), result_tx.clone())))
+            .collect();
+        tokio::spawn(run_requests(requests));
     }
     println!("Done dispatching!");
     Ok(())
 }
 
+async fn request_url(url: String, result_tx: Sender<CommandResult>) -> Result<()> {
+    let response = reqwest::get(&url).await;
+    println!("Got response: {:?}", response);
+    let command_result = match response {
+        Ok(result) => CommandResult {
+            url,
+            output: format!("{}", result.status().as_str()),
+        },
+        Err(e) => CommandResult {
+            url,
+            output: format!("{} {}", e.status().map(|status| status.as_str().to_string())
+                .unwrap_or("<none>".to_string()), e.to_string()),
+        }
+    };
+    result_tx.send(command_result).await.wrap_err("Error sending CommandResult")
+}
+
+async fn run_requests(requests: Vec<JoinHandle<Result<()>>>) {
+    future::join_all(requests).await;
+}
+
 #[derive(Debug)]
 struct Command {
-    id: String,
     urls: HashSet<String>,
 }
 
 #[derive(Debug)]
 struct CommandResult {
-    command_id: String,
     url: String,
     output: String,
 }
