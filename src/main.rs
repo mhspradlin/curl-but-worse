@@ -2,11 +2,11 @@ use std::collections::HashSet;
 use std::io::{BufRead, Write};
 
 use color_eyre::eyre::{eyre, Result, WrapErr};
-use tokio::join;
+use futures::future;
+use tokio::try_join;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task::JoinHandle;
-use futures::future;
 
 #[tokio::main]
 pub async fn main() -> Result<()> {
@@ -16,12 +16,9 @@ pub async fn main() -> Result<()> {
 
     let dispatcher: JoinHandle<Result<()>> = tokio::spawn(dispatcher(command_rx, result_tx));
 
-    let (j0, j1) = join!(
-        session_handle,
-        dispatcher
-    );
-    j0??;
-    j1??;
+    let (h0, h1) = try_join!(session_handle, dispatcher)?;
+    h0?;
+    h1?;
     println!("Bye!");
     Ok(())
 }
@@ -87,14 +84,31 @@ fn create_quit_commands() -> HashSet<&'static str> {
 }
 
 async fn dispatcher(mut command_rx: Receiver<Command>, result_tx: Sender<CommandResult>) -> Result<()> {
-    while let Some(command) = command_rx.recv().await {
-        println!("(dispatch) Got command: {:?}", command);
-        let requests = command.urls.iter()
-            .map(|url| tokio::spawn(request_url(url.clone(), result_tx.clone())))
-            .collect();
-        tokio::spawn(run_requests(requests));
-    }
+    // Block is to control lifetime of drain_tx
+    let drain_handle = {
+        let (drain_tx, drain_rx) = mpsc::channel::<JoinHandle<Result<()>>>(32);
+        let drain_handle = tokio::spawn(drain_requests(drain_rx));
+        while let Some(command) = command_rx.recv().await {
+            println!("(dispatch) Got command: {:?}", command);
+            let requests = command.urls.iter()
+                .map(|url| tokio::spawn(request_url(url.clone(), result_tx.clone())))
+                .collect();
+            let request_handle = tokio::spawn(run_requests(requests));
+            drain_tx.send(request_handle).await.wrap_err("Error sending request to drain")?;
+        }
+        drain_handle
+    };
     println!("Done dispatching!");
+    drain_handle.await.wrap_err("Error draining requests")??;
+    println!("Done draining!");
+    Ok(())
+}
+
+async fn drain_requests(mut requests_rx: Receiver<JoinHandle<Result<()>>>) -> Result<()> {
+    while let Some(join_handle) = requests_rx.recv().await {
+        join_handle.await.wrap_err("Request returned error")??;
+    }
+    println!("Done waiting on all requests!");
     Ok(())
 }
 
@@ -115,8 +129,9 @@ async fn request_url(url: String, result_tx: Sender<CommandResult>) -> Result<()
     result_tx.send(command_result).await.wrap_err("Error sending CommandResult")
 }
 
-async fn run_requests(requests: Vec<JoinHandle<Result<()>>>) {
-    future::join_all(requests).await;
+async fn run_requests(requests: Vec<JoinHandle<Result<()>>>) -> Result<()> {
+    future::try_join_all(requests).await?;
+    Ok(())
 }
 
 #[derive(Debug)]
