@@ -41,7 +41,7 @@ async fn create_session() -> (Receiver<Command>, Sender<CommandResult>, JoinHand
 
         let submit_reader_tx = reader_tx.clone();
 
-        let results_list = ResultsList::new().with_name("results-list");
+        let results_list = ListView::new().with_name("results-list");
 
         // Create a dialog with an edit text and a button.
         // The user can either hit the <Ok> button,
@@ -96,47 +96,15 @@ async fn create_session() -> (Receiver<Command>, Sender<CommandResult>, JoinHand
 async fn display_results(cb_sink: CbSink, mut result_rx: Receiver<CommandResult>) -> Result<()> {
     while let Some(result) = result_rx.recv().await {
         cb_sink.send(Box::new(move |siv: &mut Cursive| {
-            siv.call_on_name("results-list", |view: &mut ResultsList| {
-                view.add_result(result);
+            siv.call_on_name("results-list", |view: &mut ListView| {
+                add_result(view, result);
             });
         }));
     }
     Ok(())
 }
-
-struct ResultsList {
-    view: ListView,
-}
-
-impl ResultsList {
-    fn new() -> ResultsList {
-        let view = ListView::new();
-        ResultsList {
-            view
-        }
-    }
-
-    fn add_result(&mut self, result: CommandResult) {
-        self.view.add_child(result.url.as_str(), TextView::new(result.output));
-    }
-}
-
-impl View for ResultsList {
-    fn draw(&self, printer: &Printer) {
-        self.view.draw(printer);
-    }
-
-    fn layout(&mut self, size: Vec2) {
-        self.view.layout(size);
-    }
-
-    fn needs_relayout(&self) -> bool {
-        self.view.needs_relayout()
-    }
-
-    fn required_size(&mut self, constraint: Vec2) -> Vec2 {
-        self.view.required_size(constraint)
-    }
+fn add_result(view: &mut ListView, result: CommandResult) {
+    view.add_child(result.url.as_str(), TextView::new(result.output));
 }
 
 fn send_command(s: &mut Cursive, reader_tx: Sender<Command>, line: &str) {
