@@ -1,33 +1,32 @@
-use std::collections::HashSet;
-use std::io::{BufRead, Write};
-use std::sync;
+use color_eyre::eyre::{Result, WrapErr};
 
-use color_eyre::eyre::{eyre, Result, WrapErr};
-use cursive::{CbSink, Cursive, CursiveExt, Printer, Vec2};
-use cursive::direction::Orientation::Vertical;
-use cursive::traits::*;
-use cursive::views::{Dialog, EditView, LinearLayout, ListView, TextView};
-use futures::{future, StreamExt};
+use futures::future;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task::JoinHandle;
-use tokio::try_join;
 
 use crate::messages::{Command, CommandResult};
-use crate::terminal::{create_session, TerminalUI};
 
-pub async fn dispatcher(mut command_source: Receiver<Command>, result_sink: Sender<CommandResult>) -> Result<()> {
+pub async fn dispatcher(
+    mut command_source: Receiver<Command>,
+    result_sink: Sender<CommandResult>,
+) -> Result<()> {
     // Block is to control lifetime of drain_tx
     let drain_handle = {
         let (drain_tx, drain_rx) = mpsc::channel::<JoinHandle<Result<()>>>(32);
         let drain_handle = tokio::spawn(drain_requests(drain_rx));
         while let Some(command) = command_source.recv().await {
             //println!("(dispatch) Got command: {:?}", command);
-            let requests = command.urls.iter()
+            let requests = command
+                .urls
+                .iter()
                 .map(|url| tokio::spawn(request_url(url.clone(), result_sink.clone())))
                 .collect();
             let request_handle = tokio::spawn(run_requests(requests));
-            drain_tx.send(request_handle).await.wrap_err("Error sending request to drain")?;
+            drain_tx
+                .send(request_handle)
+                .await
+                .wrap_err("Error sending request to drain")?;
         }
         drain_handle
     };
@@ -55,11 +54,19 @@ async fn request_url(url: String, result_tx: Sender<CommandResult>) -> Result<()
         },
         Err(e) => CommandResult {
             url,
-            output: format!("{} {}", e.status().map(|status| status.as_str().to_string())
-                .unwrap_or("<none>".to_string()), e.to_string()),
-        }
+            output: format!(
+                "{} {}",
+                e.status()
+                    .map(|status| status.as_str().to_string())
+                    .unwrap_or("<none>".to_string()),
+                e.to_string()
+            ),
+        },
     };
-    result_tx.send(command_result).await.wrap_err("Error sending CommandResult")
+    result_tx
+        .send(command_result)
+        .await
+        .wrap_err("Error sending CommandResult")
 }
 
 async fn run_requests(requests: Vec<JoinHandle<Result<()>>>) -> Result<()> {

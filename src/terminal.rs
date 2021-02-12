@@ -2,10 +2,10 @@ use std::collections::HashSet;
 
 use color_eyre::eyre::{eyre, WrapErr};
 use color_eyre::Result;
-use cursive::{CbSink, Cursive, CursiveExt};
 use cursive::direction::Orientation::Vertical;
 use cursive::traits::{Nameable, Resizable};
 use cursive::views::{Dialog, EditView, LinearLayout, ListView, TextView};
+use cursive::{CbSink, Cursive, CursiveExt};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -19,11 +19,10 @@ pub struct TerminalUI {
 }
 
 pub fn create_session() -> TerminalUI {
-    let quit_commands = create_quit_commands();
+    let _quit_commands = create_quit_commands();
     let (reader_tx, reader_rx) = mpsc::channel(32);
-    let (writer_tx, mut writer_rx) = mpsc::channel(32);
+    let (writer_tx, writer_rx) = mpsc::channel(32);
     let (cb_sink_tx, cb_sink_rx) = oneshot::channel();
-
 
     let reader: std::thread::JoinHandle<Result<()>> = std::thread::spawn(move || {
         let mut siv = Cursive::new();
@@ -42,7 +41,8 @@ pub fn create_session() -> TerminalUI {
                     Dialog::new()
                         .title("Results")
                         .padding_lrtb(1, 1, 1, 1)
-                        .content(results_list))
+                        .content(results_list),
+                )
                 .child(
                     Dialog::new()
                         .title("Enter URLs")
@@ -51,23 +51,28 @@ pub fn create_session() -> TerminalUI {
                         .content(
                             EditView::new()
                                 // Call `show_popup` when the user presses `Enter`
-                                .on_submit(move |cursive, line| send_command(cursive, submit_reader_tx.clone(), line))
+                                .on_submit(move |cursive, line| {
+                                    send_command(cursive, submit_reader_tx.clone(), line)
+                                })
                                 // Give the `EditView` a name so we can refer to it later.
                                 .with_name("name")
                                 // Wrap this in a `ResizedView` with a fixed width.
                                 // Do this _after_ `with_name` or the name will point to the
                                 // `ResizedView` instead of `EditView`!
                                 .fixed_width(50),
-                        ))
+                        ),
+                ),
         );
 
-        cb_sink_tx.send(siv.cb_sink().clone());
+        cb_sink_tx
+            .send(siv.cb_sink().clone())
+            .map_err(|e| eyre!("Error sending cb_sink on initialization: {:?}", e))?;
 
         siv.run();
         Ok(())
     });
 
-    let writer = tokio::spawn(display_results(cb_sink_rx, writer_rx));
+    let _writer = tokio::spawn(display_results(cb_sink_rx, writer_rx));
 
     let join_handle = tokio::spawn(async {
         // I think this is in reverse order of actual shutdown, so it's okay if
@@ -77,7 +82,7 @@ pub fn create_session() -> TerminalUI {
         //writer.await?;
         match reader.join() {
             Err(e) => return Err(eyre!("Shutdown of reader thread failed: {:?}", e)),
-            Ok(r) => r?
+            Ok(r) => r?,
         };
         Ok(())
     });
@@ -85,18 +90,23 @@ pub fn create_session() -> TerminalUI {
     TerminalUI {
         command_source: reader_rx,
         result_sink: writer_tx,
-        join_handle
+        join_handle,
     }
 }
 
-async fn display_results(cb_sink_rx: oneshot::Receiver<CbSink>, mut result_rx: Receiver<CommandResult>) -> Result<()> {
+async fn display_results(
+    cb_sink_rx: oneshot::Receiver<CbSink>,
+    mut result_rx: Receiver<CommandResult>,
+) -> Result<()> {
     let cb_sink: CbSink = cb_sink_rx.await.wrap_err("Error getting cb_sink")?;
     while let Some(result) = result_rx.recv().await {
-        cb_sink.send(Box::new(move |siv: &mut Cursive| {
-            siv.call_on_name("results-list", |view: &mut ListView| {
-                add_result(view, result);
-            });
-        }));
+        cb_sink
+            .send(Box::new(move |siv: &mut Cursive| {
+                siv.call_on_name("results-list", |view: &mut ListView| {
+                    add_result(view, result);
+                });
+            }))
+            .map_err(|e| eyre!("Error sending UI update to cb_sink: {:?}", e))?;
     }
     Ok(())
 }
@@ -113,10 +123,11 @@ fn send_command(s: &mut Cursive, reader_tx: Sender<Command>, line: &str) {
         for url in line.split(" ") {
             urls.insert(url.into());
         }
-        let command = Command {
-            urls,
-        };
-        reader_tx.blocking_send(command).wrap_err("Error sending Command").unwrap();
+        let command = Command { urls };
+        reader_tx
+            .blocking_send(command)
+            .wrap_err("Error sending Command")
+            .unwrap();
     }
 }
 
