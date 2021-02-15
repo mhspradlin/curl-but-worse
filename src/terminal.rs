@@ -2,15 +2,17 @@ use std::collections::HashSet;
 
 use color_eyre::eyre::{eyre, WrapErr};
 use color_eyre::Result;
+use cursive::{CbSink, Cursive, CursiveExt};
 use cursive::direction::Orientation::Vertical;
 use cursive::traits::{Nameable, Resizable, Scrollable};
 use cursive::views::{Dialog, EditView, LinearLayout, ListView, TextView};
-use cursive::{CbSink, Cursive, CursiveExt};
-use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task::JoinHandle;
 
 use crate::messages::{Command, CommandResult};
+use cursive::view::ScrollStrategy;
+use cursive::event::EventResult;
 
 pub struct TerminalUI {
     pub command_source: Receiver<Command>,
@@ -30,7 +32,17 @@ pub fn create_session() -> TerminalUI {
 
         let submit_reader_tx = reader_tx.clone();
 
-        let results_list = ListView::new().with_name("results-list").scrollable();
+        let results_list = ListView::new().with_name("results-list")
+            .scrollable()
+            .scroll_strategy(ScrollStrategy::StickToBottom)
+            .on_scroll_inner(|scroll_view, _rect| {
+                if scroll_view.is_at_bottom() {
+                    scroll_view.set_scroll_strategy(ScrollStrategy::StickToBottom);
+                    EventResult::Consumed(None)
+                } else {
+                    EventResult::Ignored
+                }
+            });
 
         // Create a dialog with an edit text and a button.
         // The user can either hit the <Ok> button,
@@ -39,20 +51,20 @@ pub fn create_session() -> TerminalUI {
             LinearLayout::new(Vertical)
                 .child(
                     Dialog::new()
-                        .title("Enter URLs")
+                        .title("Results")
                         .padding_lrtb(1, 1, 1, 0)
+                        .content(results_list)
+                        .full_height(),
+                )
+                .child(
+                    Dialog::new()
+                        .title("Enter URLs")
+                        .padding_lrtb(1, 1, 1, 1)
                         .content(EditView::new().on_submit(move |cursive, line| {
                             send_command(cursive, submit_reader_tx.clone(), line)
                         })),
                 )
-                .child(
-                    Dialog::new()
-                        .title("Results")
-                        .padding_lrtb(1, 1, 1, 1)
-                        .content(results_list)
-                        .full_height(),
-                )
-                .full_screen(),
+                .full_screen()
         );
 
         cb_sink_tx
@@ -101,6 +113,7 @@ async fn display_results(
     }
     Ok(())
 }
+
 fn add_result(view: &mut ListView, result: CommandResult) {
     view.add_child(result.url.as_str(), TextView::new(result.output));
 }

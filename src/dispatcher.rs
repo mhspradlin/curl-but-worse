@@ -1,11 +1,13 @@
 use color_eyre::eyre::{Result, WrapErr};
 
-use futures::{future, TryFutureExt};
+use futures::future;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task::JoinHandle;
 
 use crate::messages::{Command, CommandResult};
+use reqwest::Client;
+use std::time::Duration;
 
 pub async fn dispatcher(
     mut command_source: Receiver<Command>,
@@ -15,12 +17,15 @@ pub async fn dispatcher(
     let drain_handle = {
         let (drain_tx, drain_rx) = mpsc::channel::<JoinHandle<Result<()>>>(32);
         let drain_handle = tokio::spawn(drain_requests(drain_rx));
+        let http_client: Client = Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .wrap_err("Unable to build HTTP client")?;
         while let Some(command) = command_source.recv().await {
-            //println!("(dispatch) Got command: {:?}", command);
             let requests = command
                 .urls
                 .iter()
-                .map(|url| tokio::spawn(request_url(url.clone(), result_sink.clone())))
+                .map(|url| tokio::spawn(request_url(http_client.clone(), url.clone(), result_sink.clone())))
                 .collect();
             let request_handle = tokio::spawn(run_requests(requests));
             drain_tx
@@ -44,8 +49,11 @@ async fn drain_requests(mut requests_rx: Receiver<JoinHandle<Result<()>>>) -> Re
     Ok(())
 }
 
-async fn request_url(url: String, result_tx: Sender<CommandResult>) -> Result<()> {
-    let response = reqwest::get(&url).await;
+async fn request_url(http_client: Client, url: String, result_tx: Sender<CommandResult>) -> Result<()> {
+    let request = http_client.get(&url)
+        .build()
+        .wrap_err("Unable to build GET request")?;
+    let response = http_client.execute(request).await;
     let command_result = match response {
         Ok(result) => {
             let status = result.status().as_str().to_string();

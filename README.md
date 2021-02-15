@@ -64,3 +64,9 @@ have anything for writing to the terminal directly. I guess
 by splitting the window into two panes, one with results being displayed
 and one that accepts a command? Maybe I'll start with a basic println/
 readline and then go to pretty-printing later.
+
+## How did it go?
+
+There was one big change I had to make to the original approach, which was
+that for interacting with the terminal I couldn't use async fns but instead
+was recommended to spawn a thread to manage the interaction.
