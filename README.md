@@ -69,4 +69,38 @@ readline and then go to pretty-printing later.
 
 There was one big change I had to make to the original approach, which was
 that for interacting with the terminal I couldn't use async fns but instead
-was recommended to spawn a thread to manage the interaction.
+was recommended to spawn a thread to manage the interaction. This was because
+the terminal as a resource was responsible for both input and output and
+rendering partial input as well as actual results has to be synchronized.
+The Cursive library made handling this straightforward after I found cb_sink.
+That let me bridge between the synchronous execution of Cursive and the async
+request dispatch and return.
+
+Other than that things largely went as expected. There was an additional
+'drain' task that handled waiting until in-flight requests were completed
+before closing that I didn't account for, but that was not very complicated.
+Arguably it doesn't make sense to wait for the requests to drain in a CLI
+like this, but I wanted to see how it'd be done for a service-execution
+environment where you want to drain all outstanding requests before exiting.
+
+Below is a screencast of the UI in action. I open the application, type four
+URLs, press enter a few times to asynchronously dispatch requests, scroll
+up to view the results, scroll back to the bottom, submit a few more requests,
+then leave by pressing ctrl+c.
+![](./screencast.gif)
+
+The only issues I ran into were small:
+* Cursive's ListView doesn't support adding children anywhere but the end
+  that I could find. Originally I had the input bar at the top and needed
+  to put it at the bottom so the end of the scrolling was next to the
+  input bar.
+* Bridging between the synchronous code and asynchronous code was tricky
+  until I found blocking_send() and discovered cb_sink. blocking_send()
+  let the input be sent from Cursive to the dispatcher task. In theory
+  this would gracefully handle backpressure, as if the queue backed up
+  (say, because the requests queue was full) then UI would freeze
+  and not allow any other input until some requests freed up.
+* By default reqwest didn't decompress gzip-ed response payloads, causing
+  failures when I went to get the start of the text response from only
+  some websites (like https://amazon.com); adding a feature to the crate import
+  fixed the issue.

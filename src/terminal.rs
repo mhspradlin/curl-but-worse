@@ -75,18 +75,19 @@ pub fn create_session() -> TerminalUI {
         Ok(())
     });
 
-    let _writer = tokio::spawn(display_results(cb_sink_rx, writer_rx));
+    let writer = tokio::spawn(display_results(cb_sink_rx, writer_rx));
 
     let join_handle = tokio::spawn(async {
-        // I think this is in reverse order of actual shutdown, so it's okay if
-        // the join() blocks this task since it should already have shut down by the time
-        // the writer() closes. Is is good form to wait anyways to make sure we have a clean
-        // shutdown?
-        //writer.await?;
+        // I think it's okay if the join() blocks this task since it should
+        // always be the first thing that shuts down in the application. In theory we shouldn't
+        // block though since it might permanently block a single-threaded executor. Maybe one
+        // of the threads in our executor is permanently blocked because of this? Probably good to
+        // avoid this kind of infinite blocking in a more serious application.
         match reader.join() {
             Err(e) => return Err(eyre!("Shutdown of reader thread failed: {:?}", e)),
             Ok(r) => r?,
         };
+        writer.await??;
         Ok(())
     });
 
