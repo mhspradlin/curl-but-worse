@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use color_eyre::eyre::{eyre, WrapErr};
 use color_eyre::Result;
 use cursive::direction::Orientation::Vertical;
-use cursive::traits::{Nameable, Resizable};
+use cursive::traits::{Nameable, Resizable, Scrollable};
 use cursive::views::{Dialog, EditView, LinearLayout, ListView, TextView};
 use cursive::{CbSink, Cursive, CursiveExt};
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -30,7 +30,7 @@ pub fn create_session() -> TerminalUI {
 
         let submit_reader_tx = reader_tx.clone();
 
-        let results_list = ListView::new().with_name("results-list");
+        let results_list = ListView::new().with_name("results-list").scrollable();
 
         // Create a dialog with an edit text and a button.
         // The user can either hit the <Ok> button,
@@ -39,29 +39,20 @@ pub fn create_session() -> TerminalUI {
             LinearLayout::new(Vertical)
                 .child(
                     Dialog::new()
-                        .title("Results")
-                        .padding_lrtb(1, 1, 1, 1)
-                        .content(results_list),
+                        .title("Enter URLs")
+                        .padding_lrtb(1, 1, 1, 0)
+                        .content(EditView::new().on_submit(move |cursive, line| {
+                            send_command(cursive, submit_reader_tx.clone(), line)
+                        })),
                 )
                 .child(
                     Dialog::new()
-                        .title("Enter URLs")
-                        // Padding is (left, right, top, bottom)
-                        .padding_lrtb(1, 1, 1, 0)
-                        .content(
-                            EditView::new()
-                                // Call `show_popup` when the user presses `Enter`
-                                .on_submit(move |cursive, line| {
-                                    send_command(cursive, submit_reader_tx.clone(), line)
-                                })
-                                // Give the `EditView` a name so we can refer to it later.
-                                .with_name("name")
-                                // Wrap this in a `ResizedView` with a fixed width.
-                                // Do this _after_ `with_name` or the name will point to the
-                                // `ResizedView` instead of `EditView`!
-                                .fixed_width(50),
-                        ),
-                ),
+                        .title("Results")
+                        .padding_lrtb(1, 1, 1, 1)
+                        .content(results_list)
+                        .full_height(),
+                )
+                .full_screen(),
         );
 
         cb_sink_tx

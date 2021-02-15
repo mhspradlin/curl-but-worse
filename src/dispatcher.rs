@@ -1,6 +1,6 @@
 use color_eyre::eyre::{Result, WrapErr};
 
-use futures::future;
+use futures::{future, TryFutureExt};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::task::JoinHandle;
@@ -46,12 +46,24 @@ async fn drain_requests(mut requests_rx: Receiver<JoinHandle<Result<()>>>) -> Re
 
 async fn request_url(url: String, result_tx: Sender<CommandResult>) -> Result<()> {
     let response = reqwest::get(&url).await;
-    //println!("Got response: {:?}", response);
     let command_result = match response {
-        Ok(result) => CommandResult {
-            url,
-            output: format!("{}", result.status().as_str()),
-        },
+        Ok(result) => {
+            let status = result.status().as_str().to_string();
+            let mut start_of_response: String = result
+                .text()
+                .await
+                .unwrap_or("<error getting body>".to_string())
+                .chars()
+                .take(60)
+                .collect();
+            if start_of_response.len() == 60 {
+                start_of_response.push_str("...");
+            }
+            CommandResult {
+                url,
+                output: format!("{} {}", status, start_of_response),
+            }
+        }
         Err(e) => CommandResult {
             url,
             output: format!(
